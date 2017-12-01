@@ -2055,14 +2055,17 @@ flatpak_installation_list_remote_refs_sync (FlatpakInstallation *self,
   g_hash_table_iter_init (&iter, ht);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
-      const char *refspec = key;
-      const char *checksum = value;
       FlatpakRemoteRef *ref;
+      FlatpakCollectionRef *coll_ref = key;
+      const gchar *ref_commit = value;
 
-      ref = flatpak_remote_ref_new (refspec, checksum, remote_name, state);
+      ref = flatpak_remote_ref_new (coll_ref->ref_name, ref_commit, remote_name, state);
 
       if (ref)
-        g_ptr_array_add (refs, ref);
+        {
+          g_object_set (ref, "collection-id", coll_ref->collection_id, NULL);
+          g_ptr_array_add (refs, ref);
+        }
     }
 
   return g_steal_pointer (&refs);
@@ -2097,6 +2100,8 @@ flatpak_installation_fetch_remote_ref_sync (FlatpakInstallation *self,
   g_autoptr(GHashTable) ht = NULL;
   g_autoptr(FlatpakRemoteState) state = NULL;
   g_autofree char *ref = NULL;
+  g_autoptr(FlatpakCollectionRef) coll_ref = NULL;
+  g_autofree gchar *collection_id = NULL;
   const char *checksum;
 
   if (branch == NULL)
@@ -2114,6 +2119,13 @@ flatpak_installation_fetch_remote_ref_sync (FlatpakInstallation *self,
                                      cancellable, error))
     return NULL;
 
+#ifdef FLATPAK_ENABLE_P2P
+  if (!ostree_repo_get_remote_option (flatpak_dir_get_repo (dir),
+                                      remote_name, "collection-id",
+                                      NULL, &collection_id, error))
+    return FALSE;
+#endif /* FLATPAK_ENABLE_P2P */
+
   if (kind == FLATPAK_REF_KIND_APP)
     ref = flatpak_build_app_ref (name,
                                  branch,
@@ -2123,7 +2135,8 @@ flatpak_installation_fetch_remote_ref_sync (FlatpakInstallation *self,
                                      branch,
                                      arch);
 
-  checksum = g_hash_table_lookup (ht, ref);
+  coll_ref = flatpak_collection_ref_new (collection_id, ref);
+  checksum = g_hash_table_lookup (ht, coll_ref);
 
   if (checksum != NULL)
     return flatpak_remote_ref_new (ref, checksum, remote_name, state);
