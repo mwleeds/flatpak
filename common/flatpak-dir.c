@@ -2353,6 +2353,22 @@ repo_pull_one_dir (OstreeRepo          *self,
 
       if (results_to_fetch != NULL)
         {
+          /* Override the commit checksums if necessary */
+          if (flatpak_flags & FLATPAK_PULL_FLAGS_ALLOW_DOWNGRADE)
+            {
+              unsigned int i;
+              for (i = 0; results_to_fetch[i] != NULL; i++)
+                {
+                  const OstreeRepoFinderResult *result = results_to_fetch[i];
+                  GLNX_HASH_TABLE_FOREACH_IT (result->ref_to_checksum, it, const OstreeCollectionRef*, ref,
+                                                                           const char *, checksum)
+                  {
+                    if (ostree_collection_ref_equal ((void *)ref, (void *)&collection_ref))
+                      g_hash_table_iter_replace (&it, g_strdup (rev_to_fetch));
+                  }
+                }
+            }
+
           ostree_repo_pull_from_remotes_async (self, results_to_fetch,
                                                pull_options, progress,
                                                cancellable, async_result_cb,
