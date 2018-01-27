@@ -2326,12 +2326,10 @@ repo_pull_one_dir (OstreeRepo          *self,
       g_variant_builder_add (&find_builder, "{s@v}", "update-frequency",
                              g_variant_new_variant (g_variant_new_uint32 (update_freq)));
 
-      if (flatpak_flags & FLATPAK_PULL_FLAGS_ALLOW_DOWNGRADE)
+      if (flatpak_flags & FLATPAK_PULL_FLAGS_ALLOW_DOWNGRADE && rev_to_fetch != NULL)
         {
-          revs_to_fetch[0] = rev_to_fetch;
-          revs_to_fetch[1] = NULL;
           g_variant_builder_add (&find_builder, "{s@v}", "override-commit-ids",
-                                 g_variant_new_variant (g_variant_new_strv ((const char * const *) revs_to_fetch, -1)));
+                                 g_variant_new_variant (g_variant_new_strv (&rev_to_fetch, 1)));
         }
 
       find_options = g_variant_ref_sink (g_variant_builder_end (&find_builder));
@@ -6542,7 +6540,6 @@ flatpak_dir_check_for_update (FlatpakDir          *self,
       g_auto(OstreeRepoFinderResultv) results = NULL;
       OstreeCollectionRef collection_ref = { collection_id, (char *) ref };
       OstreeCollectionRef *collection_refs_to_fetch[2] = { &collection_ref, NULL };
-      const char *revs_to_fetch[2];
       gsize i;
 
       /* Find options */
@@ -6550,10 +6547,8 @@ flatpak_dir_check_for_update (FlatpakDir          *self,
 
       if (checksum_or_latest != NULL)
         {
-          revs_to_fetch[0] = checksum_or_latest;
-          revs_to_fetch[1] = NULL;
           g_variant_builder_add (&find_builder, "{s@v}", "override-commit-ids",
-                                 g_variant_new_variant (g_variant_new_strv ((const char * const *) revs_to_fetch, -1)));
+                                 g_variant_new_variant (g_variant_new_strv (&checksum_or_latest, 1)));
         }
 
       find_options = g_variant_ref_sink (g_variant_builder_end (&find_builder));
