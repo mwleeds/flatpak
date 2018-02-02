@@ -6533,7 +6533,7 @@ flatpak_dir_check_for_update (FlatpakDir          *self,
 #ifdef FLATPAK_ENABLE_P2P
       /* Find the latest rev from the remote and its available mirrors, including
        * LAN and USB sources. */
-      GVariantBuilder find_builder;
+      g_auto(GVariantBuilder) find_builder = FLATPAK_VARIANT_BUILDER_INITIALIZER;
       g_autoptr(GMainContext) context = NULL;
       g_autoptr(GVariant) find_options = NULL;
       g_autoptr(GAsyncResult) find_result = NULL;
