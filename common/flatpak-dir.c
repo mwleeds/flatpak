@@ -3621,14 +3621,13 @@ flatpak_dir_pull_untrusted_local (FlatpakDir          *self,
      we've got something right before looking too hard at the repo and
      so we can check for a downgrade before pulling and updating the
      ref */
-
-  if (!g_file_load_contents (summary_file, cancellable,
-                             &summary_data, &summary_data_size, NULL, NULL))
-    return flatpak_fail (error, "No summary found");
-  summary_bytes = g_bytes_new_take (summary_data, summary_data_size);
-
   if (gpg_verify_summary)
     {
+      if (!g_file_load_contents (summary_file, cancellable,
+                                 &summary_data, &summary_data_size, NULL, NULL))
+        return flatpak_fail (error, "No summary found");
+      summary_bytes = g_bytes_new_take (summary_data, summary_data_size);
+
       if (!g_file_load_contents (summary_sig_file, cancellable,
                                  &summary_sig_data, &summary_sig_data_size, NULL, NULL))
         return flatpak_fail (error, "GPG verification enabled, but no summary signatures found");
@@ -3645,31 +3644,36 @@ flatpak_dir_pull_untrusted_local (FlatpakDir          *self,
 
       if (ostree_gpg_verify_result_count_valid (gpg_result) == 0)
         return flatpak_fail (error, "GPG signatures found, but none are in trusted keyring");
+
+      g_clear_object (&gpg_result);
+
+      summary = g_variant_ref_sink (g_variant_new_from_bytes (OSTREE_SUMMARY_GVARIANT_FORMAT, summary_bytes, FALSE));
+      if (!flatpak_summary_lookup_ref (summary,
+                                       collection_id,
+                                       ref,
+                                       &checksum, NULL))
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                       _("Can't find %s in remote %s"), ref, remote_name);
+          return FALSE;
+        }
     }
 
-  g_clear_object (&gpg_result);
-
-  summary = g_variant_ref_sink (g_variant_new_from_bytes (OSTREE_SUMMARY_GVARIANT_FORMAT, summary_bytes, FALSE));
-  if (!flatpak_summary_lookup_ref (summary,
-                                   collection_id,
-                                   ref,
-                                   &checksum, NULL))
-    {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                   _("Can't find %s in remote %s"), ref, remote_name);
-      return FALSE;
-    }
+  src_repo = ostree_repo_new (path_file);
+  if (!ostree_repo_open (src_repo, cancellable, error))
+    return FALSE;
 
   remote_and_branch = g_strdup_printf ("%s:%s", remote_name, ref);
+
+  if (checksum == NULL &&
+      !ostree_repo_resolve_rev (src_repo, remote_and_branch, FALSE, &checksum, error))
+    return FALSE;
+
   if (!ostree_repo_resolve_rev (self->repo, remote_and_branch, TRUE, &current_checksum, error))
     return FALSE;
 
   if (current_checksum != NULL &&
       !ostree_repo_load_commit (self->repo, current_checksum, &old_commit, NULL, NULL))
-    return FALSE;
-
-  src_repo = ostree_repo_new (path_file);
-  if (!ostree_repo_open (src_repo, cancellable, error))
     return FALSE;
 
   if (gpg_verify)
