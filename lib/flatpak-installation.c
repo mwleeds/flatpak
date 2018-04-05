@@ -979,8 +979,7 @@ flatpak_installation_list_installed_refs_for_update (FlatpakInstallation *self,
   context = g_main_context_new ();
   g_main_context_push_thread_default (context);
 
-  collection_refv = (OstreeCollectionRef **) g_ptr_array_free (collection_refs, FALSE);
-  collection_refs = NULL;
+  collection_refv = (OstreeCollectionRef **) g_ptr_array_free (g_steal_pointer (&collection_refs), FALSE);
   ostree_repo_find_remotes_async (flatpak_dir_get_repo (dir),
                                   (const OstreeCollectionRef * const *) collection_refv,
                                   NULL,  /* no options */
