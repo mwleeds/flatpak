@@ -8114,6 +8114,57 @@ typedef enum {
   FIND_MATCHING_REFS_FLAGS_KEEP_REMOTE = (1 << 0),
 } FindMatchingRefsFlags;
 
+/* helper function for find_matching_refs and find_matching_refs_from_cache */
+static void
+add_ref_if_match (const char            *refspec,
+                  const char            *opt_name,
+                  const char            *opt_branch,
+                  const char            *opt_arch,
+                  FlatpakKinds           kinds,
+                  FindMatchingRefsFlags  flags,
+                  GPtrArray             *matched_refs)
+{
+  g_auto(GStrv) parts = NULL;
+  gboolean is_app, is_runtime;
+  const char **arches = flatpak_get_arches ();
+  const char *opt_arches[] = {opt_arch, NULL};
+  g_autofree char *ref = NULL;
+
+  if (opt_arch != NULL)
+    arches = opt_arches;
+
+  /* Unprefix any remote name if needed */
+  ostree_parse_refspec (refspec, NULL, &ref, NULL);
+  if (ref == NULL)
+    return;
+
+  is_app = g_str_has_prefix (ref, "app/");
+  is_runtime = g_str_has_prefix (ref, "runtime/");
+
+  if ((!(kinds & FLATPAK_KINDS_APP) && is_app) ||
+      (!(kinds & FLATPAK_KINDS_RUNTIME) && is_runtime) ||
+      (!is_app && !is_runtime))
+    return;
+
+  parts = flatpak_decompose_ref (ref, NULL);
+  if (parts == NULL)
+    return;
+
+  if (opt_name != NULL && g_strcmp0 (opt_name, parts[1]) != 0)
+    return;
+
+  if (!g_strv_contains (arches, parts[2]))
+    return;
+
+  if (opt_branch != NULL && g_strcmp0 (opt_branch, parts[3]) != 0)
+    return;
+
+  if (flags & FIND_MATCHING_REFS_FLAGS_KEEP_REMOTE)
+    g_ptr_array_add (matched_refs, g_strdup (refspec));
+  else
+    g_ptr_array_add (matched_refs, g_steal_pointer (&ref));
+}
+
 /* Guarantees to return refs which are decomposable. */
 static GPtrArray *
 find_matching_refs (GHashTable *refs,
@@ -8125,14 +8176,9 @@ find_matching_refs (GHashTable *refs,
                     GError      **error)
 {
   g_autoptr(GPtrArray) matched_refs = NULL;
-  const char **arches = flatpak_get_arches ();
-  const char *opt_arches[] = {opt_arch, NULL};
   GHashTableIter hash_iter;
   gpointer key;
   g_autoptr(GError) local_error = NULL;
-
-  if (opt_arch != NULL)
-    arches = opt_arches;
 
   if (opt_name && !flatpak_is_valid_name (opt_name, &local_error))
     {
@@ -8151,45 +8197,58 @@ find_matching_refs (GHashTable *refs,
   g_hash_table_iter_init (&hash_iter, refs);
   while (g_hash_table_iter_next (&hash_iter, &key, NULL))
     {
-      g_autofree char *ref = NULL;
-      g_auto(GStrv) parts = NULL;
-      gboolean is_app, is_runtime;
-
-      /* Unprefix any remote name if needed */
-      ostree_parse_refspec (key, NULL, &ref, NULL);
-      if (ref == NULL)
-        continue;
-
-      is_app = g_str_has_prefix (ref, "app/");
-      is_runtime = g_str_has_prefix (ref, "runtime/");
-
-      if ((!(kinds & FLATPAK_KINDS_APP) && is_app) ||
-          (!(kinds & FLATPAK_KINDS_RUNTIME) && is_runtime) ||
-          (!is_app && !is_runtime))
-        continue;
-
-      parts = flatpak_decompose_ref (ref, NULL);
-      if (parts == NULL)
-        continue;
-
-      if (opt_name != NULL && strcmp (opt_name, parts[1]) != 0)
-        continue;
-
-      if (!g_strv_contains (arches, parts[2]))
-        continue;
-
-      if (opt_branch != NULL && strcmp (opt_branch, parts[3]) != 0)
-        continue;
-
-      if (flags & FIND_MATCHING_REFS_FLAGS_KEEP_REMOTE)
-        g_ptr_array_add (matched_refs, g_strdup (key));
-      else
-        g_ptr_array_add (matched_refs, g_steal_pointer (&ref));
+      add_ref_if_match (key, opt_name, opt_branch, opt_arch, kinds, flags, matched_refs);
     }
 
   return g_steal_pointer (&matched_refs);
 }
 
+/* This is similar to find_matching_refs but uses xa.cache data instead */
+static GPtrArray *
+find_matching_refs_from_cache (GVariant     *xa_cache,
+                               const char   *opt_name,
+                               const char   *opt_branch,
+                               const char   *opt_arch,
+                               FlatpakKinds  kinds,
+                               FindMatchingRefsFlags flags,
+                               GError      **error)
+{
+  g_autoptr(GPtrArray) matched_refs = NULL;
+  g_autoptr(GVariant) cache = NULL;
+  g_autoptr(GError) local_error = NULL;
+  gsize i, n;
+
+  if (opt_name && !flatpak_is_valid_name (opt_name, &local_error))
+    {
+      flatpak_fail (error, "'%s' is not a valid name: %s", opt_name, local_error->message);
+      return NULL;
+    }
+
+  if (opt_branch && !flatpak_is_valid_branch (opt_branch, &local_error))
+    {
+      flatpak_fail (error, "'%s' is not a valid branch name: %s", opt_branch, local_error->message);
+      return NULL;
+    }
+
+  matched_refs = g_ptr_array_new_with_free_func (g_free);
+
+  cache = g_variant_get_child_value (xa_cache, 0);
+  n = g_variant_n_children (cache);
+  for (i = 0; i < n; i++)
+    {
+      g_autoptr(GVariant) child = NULL;
+      g_autoptr(GVariant) cur_v = NULL;
+      const char *ref;
+
+      child = g_variant_get_child_value (cache, i);
+      cur_v = g_variant_get_child_value (child, 0);
+      ref = g_variant_get_data (cur_v);
+
+      add_ref_if_match (ref, opt_name, opt_branch, opt_arch, kinds, flags, matched_refs);
+    }
+
+  return g_steal_pointer (&matched_refs);
+}
 
 static char *
 find_matching_ref (GHashTable *refs,
@@ -8284,23 +8343,46 @@ flatpak_dir_find_remote_refs (FlatpakDir   *self,
 {
   g_autoptr(GHashTable) remote_refs = NULL;
   GPtrArray *matched_refs;
+  g_autofree char *collection_id = NULL;
 
   if (!flatpak_dir_ensure_repo (self, NULL, error))
     return NULL;
 
-  if (!flatpak_dir_remote_list_refs (self, remote,
-                                     &remote_refs, cancellable, error))
-    return NULL;
+  collection_id = flatpak_dir_get_remote_collection_id (self, remote);
+  if (collection_id == NULL)
+    {
+      if (!flatpak_dir_remote_list_refs (self, remote,
+                                         &remote_refs, cancellable, error))
+        return NULL;
 
-  matched_refs = find_matching_refs (remote_refs,
-                                     name,
-                                     opt_branch,
-                                     opt_arch,
-                                     kinds,
-                                     FIND_MATCHING_REFS_FLAGS_NONE,
-                                     error);
-  if (matched_refs == NULL)
-    return NULL;
+      matched_refs = find_matching_refs (remote_refs,
+                                         name,
+                                         opt_branch,
+                                         opt_arch,
+                                         kinds,
+                                         FIND_MATCHING_REFS_FLAGS_NONE,
+                                         error);
+      if (matched_refs == NULL)
+        return NULL;
+    }
+  else
+    {
+      g_autoptr(GVariant) xa_cache = NULL;
+
+      /* Use xa.cache because we can't fetch the summary when offline */
+      if (!flatpak_dir_fetch_refs_cache (self, remote, &xa_cache, cancellable, error))
+        return NULL;
+
+      matched_refs = find_matching_refs_from_cache (xa_cache,
+                                                    name,
+                                                    opt_branch,
+                                                    opt_arch,
+                                                    kinds,
+                                                    FIND_MATCHING_REFS_FLAGS_NONE,
+                                                    error);
+      if (matched_refs == NULL)
+        return NULL;
+    }
 
   g_ptr_array_add (matched_refs, NULL);
   return (char **)g_ptr_array_free (matched_refs, FALSE);
@@ -8374,30 +8456,89 @@ flatpak_dir_find_remote_ref (FlatpakDir   *self,
   g_autofree char *remote_ref = NULL;
   g_autoptr(GHashTable) remote_refs = NULL;
   g_autoptr(GError) my_error = NULL;
+  g_autofree char *collection_id = NULL;
 
   if (!flatpak_dir_ensure_repo (self, NULL, error))
     return NULL;
 
-  if (!flatpak_dir_remote_list_refs (self, remote,
-                                     &remote_refs, cancellable, error))
-    return NULL;
-
-  remote_ref = find_ref_for_refs_set (remote_refs, name, opt_branch,
-                                      opt_default_branch, opt_arch, kinds,
-                                      out_kind, &my_error);
-  if (!remote_ref)
+  collection_id = flatpak_dir_get_remote_collection_id (self, remote);
+  if (collection_id == NULL)
     {
-      if (g_error_matches (my_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+      if (!flatpak_dir_remote_list_refs (self, remote,
+                                         &remote_refs, cancellable, error))
+        return NULL;
+
+      remote_ref = find_ref_for_refs_set (remote_refs, name, opt_branch,
+                                          opt_default_branch, opt_arch, kinds,
+                                          out_kind, &my_error);
+
+      if (!remote_ref)
         {
-          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                       _("Error searching remote %s: %s"),
-                       remote,
-                       my_error->message);
-          return NULL;
+          if (g_error_matches (my_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+            {
+              g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                           _("Error searching remote %s: %s"),
+                           remote,
+                           my_error->message);
+              return NULL;
+            }
+          else
+            {
+              g_propagate_error (error, g_steal_pointer (&my_error));
+              return NULL;
+            }
+        }
+    }
+  else
+    {
+      g_autoptr(GVariant) xa_cache = NULL;
+      g_autoptr(GPtrArray) matched_refs = NULL;
+      gsize j;
+
+      /* Use xa.cache because we can't fetch the summary when offline */
+      if (!flatpak_dir_fetch_refs_cache (self, remote, &xa_cache, cancellable, error))
+        return NULL;
+
+      matched_refs = find_matching_refs_from_cache (xa_cache,
+                                                    name,
+                                                    opt_branch,
+                                                    opt_arch,
+                                                    kinds,
+                                                    FIND_MATCHING_REFS_FLAGS_NONE,
+                                                    error);
+      if (matched_refs == NULL)
+        return NULL;
+      else if (matched_refs->len == 1)
+        {
+          remote_ref = g_strdup (g_ptr_array_index (matched_refs, 0));
+          if (out_kind != NULL)
+            {
+              if (g_str_has_prefix (remote_ref, "app/"))
+                *out_kind = FLATPAK_KINDS_APP;
+              else
+                *out_kind = FLATPAK_KINDS_RUNTIME;
+            }
         }
       else
         {
-          g_propagate_error (error, g_steal_pointer (&my_error));
+          g_autoptr(GString) err = g_string_new ("");
+          g_string_printf (err, _("Multiple branches available for %s, you must specify one of: "), name);
+          g_ptr_array_sort (matched_refs, flatpak_strcmp0_ptr);
+          for (j = 0; j < matched_refs->len; j++)
+            {
+              g_auto(GStrv) parts = flatpak_decompose_ref (g_ptr_array_index (matched_refs, j), NULL);
+              g_assert (parts != NULL);
+              if (j != 0)
+                g_string_append (err, ", ");
+
+              g_string_append (err,
+                               g_strdup_printf ("%s/%s/%s",
+                                                name,
+                                                opt_arch ? opt_arch : "",
+                                                parts[3]));
+            }
+
+          flatpak_fail (error, "%s", err->str);
           return NULL;
         }
     }
@@ -10425,17 +10566,9 @@ flatpak_dir_fetch_ref_cache (FlatpakDir   *self,
   g_autoptr(GVariant) res = NULL;
   g_autoptr(GVariant) refdata = NULL;
   int pos;
-  g_autoptr(GError) local_error = NULL;
 
-  if (!flatpak_dir_lookup_repo_metadata (self, remote_name, cancellable, &local_error,
-                                         "xa.cache", "@*", &cache_v))
-    {
-      if (local_error == NULL)
-        g_set_error_literal (&local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                             _("No flatpak cache in remote summary"));
-      g_propagate_error (error, g_steal_pointer (&local_error));
-      return FALSE;
-    }
+  if (!flatpak_dir_fetch_refs_cache (self, remote_name, &cache_v, cancellable, error))
+    return FALSE;
 
   cache = g_variant_get_child_value (cache_v, 0);
 
@@ -10465,6 +10598,30 @@ flatpak_dir_fetch_ref_cache (FlatpakDir   *self,
 
   if (metadata)
     g_variant_get_child (res, 2, "s", metadata);
+
+  return TRUE;
+}
+
+gboolean
+flatpak_dir_fetch_refs_cache (FlatpakDir   *self,
+                              const char   *remote_name,
+                              GVariant    **out_cache,
+                              GCancellable *cancellable,
+                              GError      **error)
+{
+  g_autoptr(GError) local_error = NULL;
+
+  g_assert (out_cache != NULL);
+
+  if (!flatpak_dir_lookup_repo_metadata (self, remote_name, cancellable, &local_error,
+                                         "xa.cache", "@*", out_cache))
+    {
+      if (local_error == NULL)
+        g_set_error_literal (&local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                             _("No flatpak cache in remote summary"));
+      g_propagate_error (error, g_steal_pointer (&local_error));
+      return FALSE;
+    }
 
   return TRUE;
 }
