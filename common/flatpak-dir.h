@@ -616,6 +616,7 @@ gboolean   flatpak_dir_create_remote_for_ref_file (FlatpakDir   *self,
                                                    GBytes  *data,
                                                    const char *default_arch,
                                                    char   **remote_name_out,
+                                                   char   **collection_id_out,
                                                    char   **ref_out,
                                                    GError **error);
 gboolean   flatpak_dir_create_suggested_remote_for_ref_file (FlatpakDir   *self,

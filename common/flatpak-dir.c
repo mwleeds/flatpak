@@ -9686,6 +9686,7 @@ flatpak_dir_create_remote_for_ref_file (FlatpakDir *self,
                                         GBytes     *data,
                                         const char *default_arch,
                                         char      **remote_name_out,
+                                        char      **collection_id_out,
                                         char      **ref_out,
                                         GError    **error)
 {
@@ -9727,6 +9728,9 @@ flatpak_dir_create_remote_for_ref_file (FlatpakDir *self,
       if (remote == NULL)
         return FALSE;
     }
+
+  if (collection_id_out != NULL)
+    *collection_id_out = g_steal_pointer (&collection_id);
 
   *remote_name_out = g_steal_pointer (&remote);
   *ref_out = (char *)g_steal_pointer (&ref);

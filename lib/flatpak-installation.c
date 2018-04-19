@@ -1604,18 +1604,21 @@ flatpak_installation_install_ref_file (FlatpakInstallation *self,
   g_autoptr(FlatpakDir) dir = NULL;
   g_autofree char *remote = NULL;
   g_autofree char *ref = NULL;
+  g_autofree char *collection_id = NULL;
+  g_autoptr(FlatpakCollectionRef) coll_ref = NULL;
 
   dir = flatpak_installation_get_dir (self, error);
   if (dir == NULL)
     return NULL;
 
-  if (!flatpak_dir_create_remote_for_ref_file (dir, ref_file_data, NULL, &remote, &ref, error))
+  if (!flatpak_dir_create_remote_for_ref_file (dir, ref_file_data, NULL, &remote, &collection_id, &ref, error))
     return NULL;
 
   if (!flatpak_installation_drop_caches (self, cancellable, error))
     return NULL;
 
-  return flatpak_remote_ref_new (ref, NULL, remote, NULL);
+  coll_ref = flatpak_collection_ref_new (collection_id, ref);
+  return flatpak_remote_ref_new (coll_ref, NULL, remote, NULL);
 }
 
 /**
@@ -2136,13 +2139,10 @@ flatpak_installation_list_remote_refs_sync (FlatpakInstallation *self,
       FlatpakCollectionRef *coll_ref = key;
       const gchar *ref_commit = value;
 
-      ref = flatpak_remote_ref_new (coll_ref->ref_name, ref_commit, remote_or_uri, state);
+      ref = flatpak_remote_ref_new (coll_ref, ref_commit, remote_or_uri, state);
 
       if (ref)
-        {
-          g_object_set (ref, "collection-id", coll_ref->collection_id, NULL);
-          g_ptr_array_add (refs, ref);
-        }
+        g_ptr_array_add (refs, ref);
     }
 
   return g_steal_pointer (&refs);
@@ -2239,7 +2239,7 @@ flatpak_installation_fetch_remote_ref_sync (FlatpakInstallation *self,
 #endif /* FLATPAK_ENABLE_P2P */
 
   if (checksum != NULL)
-    return flatpak_remote_ref_new (ref, checksum, remote_name, state);
+    return flatpak_remote_ref_new (coll_ref, checksum, remote_name, state);
 
   g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                "Reference %s doesn't exist in remote", ref);
