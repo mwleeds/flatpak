@@ -8848,7 +8848,12 @@ flatpak_dir_get_all_installed_refs (FlatpakDir  *self,
 
       for (i = 0; app_refs[i] != NULL; i++)
         {
-          FlatpakCollectionRef *ref = flatpak_collection_ref_new (NULL, app_refs[i]);
+          g_autofree char *remote = NULL;
+          g_autofree char *collection_id = NULL;
+          remote = flatpak_dir_get_origin (self, app_refs[i], NULL, NULL);
+          if (remote != NULL)
+            collection_id = flatpak_dir_get_remote_collection_id (self, remote);
+          FlatpakCollectionRef *ref = flatpak_collection_ref_new (collection_id, app_refs[i]);
           g_hash_table_add (local_refs, ref);
         }
     }
@@ -8861,7 +8866,12 @@ flatpak_dir_get_all_installed_refs (FlatpakDir  *self,
 
       for (i = 0; runtime_refs[i] != NULL; i++)
         {
-          FlatpakCollectionRef *ref = flatpak_collection_ref_new (NULL, runtime_refs[i]);
+          g_autofree char *remote = NULL;
+          g_autofree char *collection_id = NULL;
+          remote = flatpak_dir_get_origin (self, runtime_refs[i], NULL, NULL);
+          if (remote != NULL)
+            collection_id = flatpak_dir_get_remote_collection_id (self, remote);
+          FlatpakCollectionRef *ref = flatpak_collection_ref_new (collection_id, runtime_refs[i]);
           g_hash_table_add (local_refs, ref);
         }
     }
