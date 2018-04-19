@@ -10160,7 +10160,10 @@ _flatpak_dir_fetch_remote_state_metadata_branch (FlatpakDir    *self,
   /* Look up the checksum as advertised by the summary file. If it differs from
    * what we currently have on disk, try and pull the updated ostree-metadata ref.
    * This is how we implement caching. Ignore failure and pull the ref anyway. */
-  flatpak_summary_lookup_ref (state->summary, state->collection_id, OSTREE_REPO_METADATA_REF, &checksum_from_summary, NULL);
+  if (state->summary != NULL)
+    flatpak_summary_lookup_ref (state->summary, state->collection_id,
+                                OSTREE_REPO_METADATA_REF,
+                                &checksum_from_summary, NULL);
 
   refspec = g_strdup_printf ("%s:%s", state->remote_name, OSTREE_REPO_METADATA_REF);
   if (!ostree_repo_resolve_rev (self->repo, refspec, TRUE, &checksum_from_repo, error))
