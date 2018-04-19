@@ -8744,6 +8744,7 @@ flatpak_dir_find_remote_ref (FlatpakDir   *self,
 static gboolean
 list_collection_refs_from_ostree_repo (OstreeRepo    *repo,
                                        const char    *refspec_prefix,
+                                       const char    *opt_collection_id,
                                        GHashTable   **out_all_refs,
                                        GCancellable  *cancellable,
                                        GError       **error)
@@ -8753,7 +8754,8 @@ list_collection_refs_from_ostree_repo (OstreeRepo    *repo,
   GHashTable *coll_refs = NULL;
   g_autoptr(GHashTable) refs = NULL;
 
-  if (!ostree_repo_list_refs (repo, NULL, &refs, cancellable, error))
+  /* FIXME: Use ostree_repo_list_collection_refs when it's public */
+  if (!ostree_repo_list_refs (repo, refspec_prefix, &refs, cancellable, error))
     return FALSE;
 
   coll_refs = g_hash_table_new_full (flatpak_collection_ref_hash,
@@ -8764,7 +8766,7 @@ list_collection_refs_from_ostree_repo (OstreeRepo    *repo,
   g_hash_table_iter_init (&iter, refs);
   while (g_hash_table_iter_next (&iter, &key, NULL))
     {
-      FlatpakCollectionRef *ref = flatpak_collection_ref_new (NULL, key);
+      FlatpakCollectionRef *ref = flatpak_collection_ref_new (opt_collection_id, key);
       g_hash_table_add (coll_refs, ref);
     }
 
@@ -8789,15 +8791,16 @@ flatpak_dir_find_local_ref (FlatpakDir   *self,
   g_autofree char *collection_id = NULL;
   g_autoptr(GHashTable) local_refs = NULL;
   g_autoptr(GError) my_error = NULL;
+  g_autofree char *refspec_prefix = g_strconcat (remote, ":.", NULL);
 
   if (!flatpak_dir_ensure_repo (self, NULL, error))
     return NULL;
 
-  if (!list_collection_refs_from_ostree_repo (self->repo, NULL, &local_refs,
-                                              cancellable, error))
+  collection_id = flatpak_dir_get_remote_collection_id (self, remote);
+  if (!list_collection_refs_from_ostree_repo (self->repo, refspec_prefix, collection_id,
+                                              &local_refs, cancellable, error))
     return NULL;
 
-  collection_id = flatpak_dir_get_remote_collection_id (self, remote);
   local_ref = find_ref_for_refs_set (local_refs, name, opt_branch,
                                      opt_default_branch, opt_arch,
                                      collection_id, kinds, out_kind, &my_error);
@@ -9007,7 +9010,7 @@ flatpak_dir_cleanup_undeployed_refs (FlatpakDir   *self,
   g_autoptr(GPtrArray) undeployed_refs = NULL;
   gsize i = 0;
 
-  if (!list_collection_refs_from_ostree_repo (self->repo, NULL, &local_refspecs,
+  if (!list_collection_refs_from_ostree_repo (self->repo, NULL, NULL, &local_refspecs,
                                               cancellable, error))
     return FALSE;
 
