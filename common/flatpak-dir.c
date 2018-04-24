@@ -2556,6 +2556,8 @@ flatpak_dir_update_appstream (FlatpakDir          *self,
       if (child_repo_file)
         (void) flatpak_rm_rf (child_repo_file, NULL, NULL);
 
+      glnx_release_lock_file (&child_repo_lock);
+
       return TRUE;
     }
 
@@ -6620,6 +6622,8 @@ flatpak_dir_install (FlatpakDir          *self,
       if (child_repo_path)
         (void) glnx_shutil_rm_rf_at (AT_FDCWD, child_repo_path, NULL, NULL);
 
+      glnx_release_lock_file (&child_repo_lock);
+
       return TRUE;
     }
 
@@ -7166,6 +7170,8 @@ flatpak_dir_update (FlatpakDir          *self,
 
       if (child_repo_path)
         (void) glnx_shutil_rm_rf_at (AT_FDCWD, child_repo_path, NULL, NULL);
+
+      glnx_release_lock_file (&child_repo_lock);
 
       return TRUE;
     }
@@ -10344,6 +10350,8 @@ _flatpak_dir_fetch_remote_state_metadata_branch (FlatpakDir    *self,
 
       if (child_repo_path)
         (void) glnx_shutil_rm_rf_at (AT_FDCWD, child_repo_path, NULL, NULL);
+
+      glnx_release_lock_file (&child_repo_lock);
 
       return TRUE;
     }
