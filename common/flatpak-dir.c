@@ -2592,14 +2592,14 @@ flatpak_dir_do_resolve_p2p_refs (FlatpakDir               *self,
       FlatpakDirResolve *resolve = data->resolve;
       g_autoptr(GVariant) commit_data = NULL;
       g_autoptr(GVariant) commit_metadata = NULL;
-      g_autofree char *refspec = NULL;
       const char *xa_metadata = NULL;
 
       if (resolve->resolved_commit != NULL)
         continue;
 
-      refspec = g_strdup_printf ("%s:%s", resolve->remote, resolve->ref);
-      if (!ostree_repo_resolve_rev (child_repo, refspec, FALSE, &resolve->resolved_commit, error))
+      if (!ostree_repo_resolve_collection_ref (child_repo, &data->collection_ref, FALSE,
+                                               OSTREE_REPO_RESOLVE_REV_EXT_NONE,
+                                               &resolve->resolved_commit, cancellable, error))
         return FALSE;
 
       if (!ostree_repo_load_commit (child_repo, resolve->resolved_commit, &commit_data, NULL, error))
@@ -2630,7 +2630,6 @@ flatpak_dir_resolve_p2p_refs (FlatpakDir               *self,
     {
       FlatpakDirResolve *resolve = resolves[i];
       FlatpakDirResolveData *data = g_new0 (FlatpakDirResolveData, 1);
-      g_autofree char *refspec = g_strdup_printf ("%s:%s", resolve->remote, resolve->ref);
 
       g_assert (resolve->ref != NULL);
       g_assert (resolve->remote != NULL);
@@ -2642,7 +2641,9 @@ flatpak_dir_resolve_p2p_refs (FlatpakDir               *self,
       g_assert (data->collection_ref.collection_id != NULL);
 
       if (resolve->opt_commit == NULL)
-        ostree_repo_resolve_rev (self->repo, refspec, TRUE, &data->local_commit, NULL);
+        ostree_repo_resolve_collection_ref (self->repo, &data->collection_ref, TRUE,
+                                            OSTREE_REPO_RESOLVE_REV_EXT_NONE,
+                                            &data->local_commit, NULL, NULL);
 
       /* The ostree p2p api doesn't let you mix pulls with specific commit IDs
        * and HEAD (https://github.com/ostreedev/ostree/issues/1622) so we need
@@ -10735,7 +10736,7 @@ _flatpak_dir_fetch_remote_state_metadata_branch (FlatpakDir    *self,
   gboolean gpg_verify;
   g_autofree char *checksum_from_summary = NULL;
   g_autofree char *checksum_from_repo = NULL;
-  g_autofree char *refspec = NULL;
+  g_autoptr(OstreeCollectionRef) collection_ref = NULL;
 
   g_assert (state->collection_id != NULL);
 
@@ -10755,9 +10756,12 @@ _flatpak_dir_fetch_remote_state_metadata_branch (FlatpakDir    *self,
                                 OSTREE_REPO_METADATA_REF,
                                 &checksum_from_summary, NULL);
 
-  refspec = g_strdup_printf ("%s:%s", state->remote_name, OSTREE_REPO_METADATA_REF);
-  if (!ostree_repo_resolve_rev (self->repo, refspec, TRUE, &checksum_from_repo, error))
+  collection_ref = ostree_collection_ref_new (state->collection_id, OSTREE_REPO_METADATA_REF);
+  if (!ostree_repo_resolve_collection_ref (self->repo, collection_ref, TRUE,
+                                           OSTREE_REPO_RESOLVE_REV_EXT_NONE,
+                                           &checksum_from_repo, cancellable, error))
     return FALSE;
+
 
   g_debug ("%s: Comparing %s from summary and %s from repo",
            G_STRFUNC, checksum_from_summary, checksum_from_repo);
@@ -10863,7 +10867,7 @@ _flatpak_dir_fetch_remote_state_metadata_branch (FlatpakDir    *self,
     }
 
   if (!flatpak_dir_pull (self, state, OSTREE_REPO_METADATA_REF, NULL, NULL, NULL, NULL,
-                         flatpak_flags, OSTREE_REPO_PULL_FLAGS_NONE,
+                         flatpak_flags, OSTREE_REPO_PULL_FLAGS_MIRROR,
                          NULL, cancellable, error))
     return FALSE;
 
