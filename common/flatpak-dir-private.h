@@ -91,6 +91,7 @@ typedef struct
   GError   *summary_fetch_error;
   GVariant *metadata;
   GError   *metadata_fetch_error;
+  GVariant *outdated_metadata;
 } FlatpakRemoteState;
 
 void flatpak_remote_state_free (FlatpakRemoteState *remote_state);

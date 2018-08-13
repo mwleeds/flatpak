@@ -203,6 +203,7 @@ flatpak_remote_state_free (FlatpakRemoteState *remote_state)
   g_clear_error (&remote_state->summary_fetch_error);
   g_clear_pointer (&remote_state->metadata, g_variant_unref);
   g_clear_error (&remote_state->metadata_fetch_error);
+  g_clear_pointer (&remote_state->outdated_metadata, g_variant_unref);
 
   g_free (remote_state);
 }
@@ -9055,6 +9056,12 @@ _flatpak_dir_get_remote_state (FlatpakDir   *self,
                  and we should just silently fail to update to it. */
               state->metadata_fetch_error = g_steal_pointer (&local_error);
               g_debug ("Failed to download optional metadata");
+            }
+          else if (g_error_matches (local_error, FLATPAK_ERROR, FLATPAK_ERROR_DOWNGRADE))
+            {
+              /* The latest metadata available is a downgrade, which means
+               * we're offline and using a LAN/USB source. Downgrading the metadata in the system repo would be a security risk, so instead ignore the downgrade and use the later metadata. There's some chance its information won't be accurate for the  */
+              //TODO load the outdated metadata into self->outdated_metadata
             }
           else
             {
