@@ -686,8 +686,6 @@ is_valid_name_character (gint c, gboolean allow_dash)
  * 2) DBus names require only two elements
  *
  * Returns: %TRUE if valid, %FALSE otherwise.
- *
- * Since: 2.26
  */
 gboolean
 flatpak_is_valid_name (const char *string,
@@ -952,8 +950,6 @@ is_valid_branch_character (gint c)
  * Branch names must contain at least one character.
  *
  * Returns: %TRUE if valid, %FALSE otherwise.
- *
- * Since: 2.26
  */
 gboolean
 flatpak_is_valid_branch (const char *string,
