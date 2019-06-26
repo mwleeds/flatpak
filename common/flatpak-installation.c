@@ -1632,6 +1632,156 @@ flatpak_installation_get_config (FlatpakInstallation *self,
   return flatpak_dir_get_config (dir, key, error);
 }
 
+/* This is copied from libostree so we can lower our required version */
+static gboolean
+min_free_space_size_validate_and_convert (OstreeRepo    *self,
+                                          const char    *min_free_space_size_str,
+                                          GError       **error)
+{
+  static GRegex *regex;
+  static gsize regex_initialized;
+  if (g_once_init_enter (&regex_initialized))
+    {
+      regex = g_regex_new ("^([0-9]+)(G|M|T)B$", 0, 0, NULL);
+      g_assert (regex);
+      g_once_init_leave (&regex_initialized, 1);
+    }
+
+  g_autoptr(GMatchInfo) match = NULL;
+  if (!g_regex_match (regex, min_free_space_size_str, 0, &match))
+    return glnx_throw (error, "It should be of the format '123MB', '123GB' or '123TB'");
+
+  g_autofree char *size_str = g_match_info_fetch (match, 1);
+  g_autofree char *unit = g_match_info_fetch (match, 2);
+  guint shifts;
+
+  switch (*unit)
+    {
+      case 'M':
+        shifts = 0;
+        break;
+      case 'G':
+        shifts = 10;
+        break;
+      case 'T':
+        shifts = 20;
+        break;
+      default:
+        g_assert_not_reached ();
+    }
+
+  guint64 min_free_space = g_ascii_strtoull (size_str, NULL, 10);
+  if (shifts > 0 && g_bit_nth_lsf (min_free_space, 63 - shifts) != -1)
+    return glnx_throw (error, "Value was too high");
+
+  self->min_free_space_mb = min_free_space << shifts;
+
+  return TRUE;
+}
+
+/* This is copied (modified) from libostree so we can lower our required version */
+static gboolean
+parse_config_min_free_space (GKeyFile *config,
+                             guint64   min_free_space_mb,
+                             guint     min_free_space_percent,
+                             GError  **error)
+{
+  /* Try to parse both min-free-space-* config options first. If both are absent, fallback on 3% free space.
+   * If both are present and are non-zero, use min-free-space-size unconditionally and display a warning.
+   */
+  if (g_key_file_has_key (config, "core", "min-free-space-size", NULL))
+    {
+      g_autofree char *min_free_space_size_str = NULL;
+
+      if (!ot_keyfile_get_value_with_default (config, "core", "min-free-space-size",
+                                              NULL, &min_free_space_size_str, error))
+        return FALSE;
+
+      /* Validate the string and convert the size to MBs */
+      if (!min_free_space_size_validate_and_convert (self, min_free_space_size_str, error))
+        return glnx_prefix_error (error, "Invalid min-free-space-size '%s'", min_free_space_size_str);
+    }
+
+  if (g_key_file_has_key (config, "core", "min-free-space-percent", NULL))
+    {
+      g_autofree char *min_free_space_percent_str = NULL;
+
+      if (!ot_keyfile_get_value_with_default (config, "core", "min-free-space-percent",
+                                              NULL, &min_free_space_percent_str, error))
+        return FALSE;
+
+      min_free_space_percent = g_ascii_strtoull (min_free_space_percent_str, NULL, 10);
+      if (min_free_space_percent > 99)
+        return glnx_throw (error, "Invalid min-free-space-percent '%s'", min_free_space_percent_str);
+    }
+  else if (!g_key_file_has_key (config, "core", "min-free-space-size", NULL))
+    {
+      /* Default fallback of 3% free space. If changing this, be sure to change the man page too */
+      min_free_space_percent = 3;
+      min_free_space_mb = 0;
+    }
+
+  if (min_free_space_percent != 0 && min_free_space_mb != 0)
+    {
+      min_free_space_percent = 0;
+      g_debug ("Both min-free-space-percent and -size are mentioned in config. Enforcing min-free-space-size check only.");
+    }
+}
+
+/* This is copied (modified) from libostree so we can lower our required version */
+static gboolean
+min_free_space_calculate_reserved_bytes (OstreeRepo *ostree_repo, guint64 *bytes, GError **error)
+{
+  guint64 reserved_bytes = 0;
+  GKeyFile *config = ostree_repo_get_config (ostree_repo);
+  guint64 min_free_space_mb = 0;
+  guint min_free_space_percent = 0;
+
+  if (!parse_min_free_space_config (config, &min_free_space_mb, &min_free_space_percent, error))
+    return FALSE;
+
+  GFile *repo_dir_file = ostree_repo_get_path (ostree_repo);
+  g_autofree char *repo_dir_path = g_file_get_path (repo_dir_file);
+  struct statvfs stvfsbuf;
+  if (TEMP_FAILURE_RETRY (statvfs (repo_dir_path, &stvfsbuf)) < 0)
+    return glnx_throw_errno_prefix (error, "fstatvfs");
+
+  if (min_free_space_mb > 0)
+    {
+      if (min_free_space_mb > (G_MAXUINT64 >> 20))
+        return glnx_throw (error, "min-free-space value is greater than the maximum allowed value of %" G_GUINT64_FORMAT " bytes",
+                           (G_MAXUINT64 >> 20));
+
+      reserved_bytes = min_free_space_mb << 20;
+    }
+  else if (min_free_space_percent > 0)
+    {
+      if (stvfsbuf.f_frsize > (G_MAXUINT64 / stvfsbuf.f_blocks))
+        return glnx_throw (error, "Filesystem's size is greater than the maximum allowed value of %" G_GUINT64_FORMAT " bytes",
+                           (G_MAXUINT64 / stvfsbuf.f_blocks));
+
+      guint64 total_bytes = (stvfsbuf.f_frsize * stvfsbuf.f_blocks);
+      reserved_bytes = ((double)total_bytes) * (min_free_space_percent/100.0);
+    }
+
+  *bytes = reserved_bytes;
+  return TRUE;
+}
+
+/* This is copied from libostree so we can lower our required version */
+static gboolean
+_ostree_repo_get_min_free_space_bytes (OstreeRepo  *ostree_repo, guint64 *out_reserved_bytes, GError **error)
+{
+  g_return_val_if_fail (OSTREE_IS_REPO (ostree_repo), FALSE);
+  g_return_val_if_fail (out_reserved_bytes != NULL, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  if (!min_free_space_calculate_reserved_bytes (ostree_repo, out_reserved_bytes, error))
+    return glnx_prefix_error (error, "Error calculating min-free-space bytes");
+
+  return TRUE;
+}
+
 /**
  * flatpak_installation_get_min_free_space_bytes:
  * @self: a #FlatpakInstallation
@@ -1665,7 +1815,11 @@ flatpak_installation_get_min_free_space_bytes (FlatpakInstallation *self,
   if (!flatpak_dir_ensure_repo (dir_clone, NULL, error))
     return FALSE;
 
+#if OSTREE_CHECK_VERSION (2018, 9)
   return ostree_repo_get_min_free_space_bytes (flatpak_dir_get_repo (dir_clone), out_bytes, error);
+#else
+  return _ostree_repo_get_min_free_space_bytes (flatpak_dir_get_repo (dir_clone), out_bytes, error);
+#endif
 }
 
 /**
