@@ -1429,7 +1429,8 @@ flatpak_kinds_from_bools (gboolean app, gboolean runtime)
 
 static gboolean
 _flatpak_split_partial_ref_arg (const char   *partial_ref,
-                                gboolean      validate,
+                                gboolean      validate_id,
+                                gboolean      validate_branch,
                                 FlatpakKinds  default_kinds,
                                 const char   *default_arch,
                                 const char   *default_branch,
@@ -1468,7 +1469,7 @@ _flatpak_split_partial_ref_arg (const char   *partial_ref,
   id_end = next_element (&partial_ref);
   id = g_strndup (id_start, id_end - id_start);
 
-  if (validate && !flatpak_is_valid_name (id, &local_error))
+  if (validate_id && !flatpak_is_valid_name (id, &local_error))
     return flatpak_fail_error (error, FLATPAK_ERROR_INVALID_REF, _("Invalid id %s: %s"), id, local_error->message);
 
   arch_start = partial_ref;
@@ -1485,7 +1486,7 @@ _flatpak_split_partial_ref_arg (const char   *partial_ref,
   else
     branch = g_strdup (default_branch);
 
-  if (validate && branch != NULL && !flatpak_is_valid_branch (branch, &local_error))
+  if (validate_branch && branch != NULL && !flatpak_is_valid_branch (branch, &local_error))
     return flatpak_fail_error (error, FLATPAK_ERROR_INVALID_REF, _("Invalid branch %s: %s"), branch, local_error->message);
 
   if (out_kinds)
@@ -1513,6 +1514,31 @@ flatpak_split_partial_ref_arg (const char   *partial_ref,
 {
   return _flatpak_split_partial_ref_arg (partial_ref,
                                          TRUE,
+                                         TRUE,
+                                         default_kinds,
+                                         default_arch,
+                                         default_branch,
+                                         out_kinds,
+                                         out_id,
+                                         out_arch,
+                                         out_branch,
+                                         error);
+}
+
+gboolean
+flatpak_split_partial_ref_arg_validate_branch (const char   *partial_ref,
+                                               FlatpakKinds  default_kinds,
+                                               const char   *default_arch,
+                                               const char   *default_branch,
+                                               FlatpakKinds *out_kinds,
+                                               char        **out_id,
+                                               char        **out_arch,
+                                               char        **out_branch,
+                                               GError      **error)
+{
+  return _flatpak_split_partial_ref_arg (partial_ref,
+                                         FALSE,
+                                         TRUE,
                                          default_kinds,
                                          default_arch,
                                          default_branch,
@@ -1534,6 +1560,7 @@ flatpak_split_partial_ref_arg_novalidate (const char   *partial_ref,
                                           char        **out_branch)
 {
   return _flatpak_split_partial_ref_arg (partial_ref,
+                                         FALSE,
                                          FALSE,
                                          default_kinds,
                                          default_arch,

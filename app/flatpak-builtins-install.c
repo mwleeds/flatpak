@@ -381,8 +381,9 @@ flatpak_builtin_install (int argc, char **argv, GCancellable *cancellable, GErro
 
                   this_default_branch = flatpak_dir_get_remote_default_branch (this_dir, this_remote);
 
-                  flatpak_split_partial_ref_arg_novalidate (argv[1], kinds, opt_arch, target_branch,
-                                                            &matched_kinds, &id, &arch, &branch);
+                  if (!flatpak_split_partial_ref_arg_validate_branch (argv[1], kinds, opt_arch, target_branch,
+                                                                      &matched_kinds, &id, &arch, &branch, error))
+                    return FALSE;
 
                   if (opt_no_pull)
                     refs = flatpak_dir_find_local_refs (this_dir, this_remote, id, branch, this_default_branch, arch,
@@ -467,14 +468,10 @@ flatpak_builtin_install (int argc, char **argv, GCancellable *cancellable, GErro
       g_autofree char *ref = NULL;
       g_auto(GStrv) refs = NULL;
       guint refs_len;
-      g_autoptr(GError) local_error = NULL;
 
-      flatpak_split_partial_ref_arg_novalidate (pref, kinds, opt_arch, target_branch,
-                                                &matched_kinds, &id, &arch, &branch);
-
-      /* We used _novalidate so that the id can be partial, but we can still validate the branch */
-      if (branch != NULL && !flatpak_is_valid_branch (branch, &local_error))
-        return flatpak_fail_error (error, FLATPAK_ERROR_INVALID_REF, _("Invalid branch %s: %s"), branch, local_error->message);
+      if (!flatpak_split_partial_ref_arg_validate_branch (pref, kinds, opt_arch, target_branch,
+                                                          &matched_kinds, &id, &arch, &branch, error))
+        return FALSE;
 
       if (opt_no_pull)
         refs = flatpak_dir_find_local_refs (dir, remote, id, branch, default_branch, arch,

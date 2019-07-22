@@ -219,6 +219,15 @@ gboolean flatpak_split_partial_ref_arg_novalidate (const char   *partial_ref,
                                                    char        **out_id,
                                                    char        **out_arch,
                                                    char        **out_branch);
+gboolean flatpak_split_partial_ref_arg_validate_branch (const char   *partial_ref,
+                                                        FlatpakKinds  default_kinds,
+                                                        const char   *default_arch,
+                                                        const char   *default_branch,
+                                                        FlatpakKinds *out_kinds,
+                                                        char        **out_id,
+                                                        char        **out_arch,
+                                                        char        **out_branch,
+                                                        GError      **error);
 
 int flatpak_compare_ref (const char *ref1,
                          const char *ref2);

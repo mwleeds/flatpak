@@ -260,7 +260,6 @@ flatpak_builtin_uninstall (int argc, char **argv, GCancellable *cancellable, GEr
           g_autofree char *id = NULL;
           g_autofree char *arch = NULL;
           g_autofree char *branch = NULL;
-          g_autoptr(GError) local_error = NULL;
           g_autoptr(GPtrArray) ref_dir_pairs = NULL;
           UninstallDir *udir = NULL;
           gboolean found_exact_name_match = FALSE;
@@ -268,12 +267,9 @@ flatpak_builtin_uninstall (int argc, char **argv, GCancellable *cancellable, GEr
 
           pref = prefs[j];
 
-          flatpak_split_partial_ref_arg_novalidate (pref, kinds, opt_arch, default_branch,
-                                                    &matched_kinds, &id, &arch, &branch);
-
-          /* We used _novalidate so that the id can be partial, but we can still validate the branch */
-          if (branch != NULL && !flatpak_is_valid_branch (branch, &local_error))
-            return flatpak_fail_error (error, FLATPAK_ERROR_INVALID_REF, _("Invalid branch %s: %s"), branch, local_error->message);
+          if (!flatpak_split_partial_ref_arg_validate_branch (pref, kinds, opt_arch, default_branch,
+                                                              &matched_kinds, &id, &arch, &branch, error))
+            return FALSE;
 
           ref_dir_pairs = g_ptr_array_new_with_free_func ((GDestroyNotify) ref_dir_pair_free);
           for (k = 0; k < dirs->len; k++)
