@@ -2512,7 +2512,11 @@ flatpak_installation_fetch_remote_ref_sync_full (FlatpakInstallation *self,
   if (dir == NULL)
     return NULL;
 
-  state = flatpak_dir_get_remote_state (dir, remote_name, (flags & FLATPAK_QUERY_FLAGS_ONLY_CACHED) != 0, cancellable, error);
+   /* This is optional so we can support fetching from an offline source like a
+    * USB drive
+    */
+  //TODO what about the ONLY_CACHED flag?
+  state = flatpak_dir_get_remote_state_optional (dir, remote_name, cancellable, error);
   if (state == NULL)
     return NULL;
 
@@ -2537,6 +2541,10 @@ flatpak_installation_fetch_remote_ref_sync_full (FlatpakInstallation *self,
 
   coll_ref = flatpak_collection_ref_new (collection_id, ref);
   checksum = g_hash_table_lookup (ht, coll_ref);
+
+  //TODO use list_remotes_for_configured_remote() to get a checksum from a USB remote
+  if (checksum == NULL && g_hash_table_contains (ht, coll_ref))
+    return flatpak_remote_ref_new (coll_ref, NULL, remote_name, state);
 
   /* If there was not a match, it may be because the collection ID is
    * not set in the local configuration, or it is wrong, so we resort to
