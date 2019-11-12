@@ -3964,17 +3964,9 @@ flatpak_dir_do_resolve_p2p_refs (FlatpakDir             *self,
         }
     }
 
-  OstreeRepoPullFlags flags = OSTREE_REPO_PULL_FLAGS_COMMIT_ONLY;
-  /* Do a version check to ensure we have these:
-   * https://github.com/ostreedev/ostree/pull/1821
-   * https://github.com/ostreedev/ostree/pull/1825 */
-#if OSTREE_CHECK_VERSION (2019, 2)
-  flags |= OSTREE_REPO_PULL_FLAGS_MIRROR;
-#endif
-
   g_variant_builder_init (&pull_builder, G_VARIANT_TYPE ("a{sv}"));
   g_variant_builder_add (&pull_builder, "{s@v}", "flags",
-                         g_variant_new_variant (g_variant_new_int32 (flags)));
+                         g_variant_new_variant (g_variant_new_int32 (OSTREE_REPO_PULL_FLAGS_COMMIT_ONLY)));
   g_variant_builder_add (&pull_builder, "{s@v}", "inherit-transaction",
                          g_variant_new_variant (g_variant_new_boolean (TRUE)));
 
