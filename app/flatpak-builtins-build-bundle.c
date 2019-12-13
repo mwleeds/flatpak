@@ -639,7 +639,7 @@ flatpak_builtin_build_bundle (int argc, char **argv, GCancellable *cancellable, 
   if (argc >= 5)
     branch = argv[4];
   else
-    branch = "master";
+    branch = NULL;
 
   repofile = g_file_new_for_commandline_arg (location);
   repo = ostree_repo_new (repofile);
@@ -659,19 +659,45 @@ flatpak_builtin_build_bundle (int argc, char **argv, GCancellable *cancellable, 
     full_branch = g_strdup (name);
   else
     {
-      if (!flatpak_is_valid_name (name, &my_error))
-        return flatpak_fail (error, _("'%s' is not a valid name: %s"), name, my_error->message);
+      /* For backwards compat see if there's an exact match for the branch "master" */
+      if (flatpak_is_valid_name (name, NULL) && branch == NULL)
+        {
+          if (opt_runtime)
+            full_branch = flatpak_build_runtime_ref (name, "master", opt_arch);
+          else
+            full_branch = flatpak_build_app_ref (name, "master", opt_arch);
 
-      if (!flatpak_is_valid_branch (branch, &my_error))
-        return flatpak_fail (error, _("'%s' is not a valid branch name: %s"), branch, my_error->message);
+          _repo_resolve_rev (repo, full_branch, &commit_checksum, NULL, NULL);
+        }
 
-      if (opt_runtime)
-        full_branch = flatpak_build_runtime_ref (name, branch, opt_arch);
-      else
-        full_branch = flatpak_build_app_ref (name, branch, opt_arch);
+      /* Try fuzzy matching the given name */
+      if (commit_checksum == NULL)
+        {
+          g_autoptr(FlatpakDir) dir = NULL;
+          g_autoptr(GFile) dirfile = NULL;
 
-      if (!_repo_resolve_rev (repo, full_branch, &commit_checksum, cancellable, error))
-        return FALSE;
+          if (branch != NULL && !flatpak_is_valid_branch (branch, &my_error))
+            return flatpak_fail (error, _("'%s' is not a valid branch name: %s"), branch, my_error->message);
+
+          dirfile = g_file_get_parent (repofile);
+          if (dirfile == NULL)
+            return flatpak_fail_error (error, FLATPAK_ERROR_INVALID_DATA,
+                                       _("Failed to find flatpak dir for specified repo"));
+          dir = flatpak_dir_get_by_path (dirfile);
+          refs = flatpak_dir_find_installed_refs (dir, name, branch, opt_arch,
+                                                  opt_runtime ? FLATPAK_KINDS_RUNTIME : FLATPAK_KINDS_APP,
+                                                  FIND_MATCHING_REFS_FLAGS_FUZZY,
+                                                  error);
+          if (refs == NULL)
+            return FALSE;
+          if (g_strv_length (refs) == 0)
+            return flatpak_fail_error (error, FLATPAK_ERROR_NOT_INSTALLED,
+                                       _("%s/%s/%s not installed"),
+                                       name,
+                                       opt_arch ? opt_arch : "*unspecified*",
+                                       branch ? branch : "*unspecified*");
+        }
+
     }
 
   file = g_file_new_for_commandline_arg (filename);
