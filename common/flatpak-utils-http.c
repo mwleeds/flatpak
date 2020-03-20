@@ -28,6 +28,9 @@
 #include <sys/types.h>
 #include <sys/xattr.h>
 
+/* copied from libostree */
+#define DEFAULT_N_NETWORK_RETRIES 5
+
 typedef struct
 {
   char  *uri;
@@ -533,14 +536,14 @@ flatpak_create_soup_session (const char *user_agent)
 }
 
 GBytes *
-flatpak_load_http_uri (SoupSession           *soup_session,
-                       const char            *uri,
-                       FlatpakHTTPFlags       flags,
-                       const char            *token,
-                       FlatpakLoadUriProgress progress,
-                       gpointer               user_data,
-                       GCancellable          *cancellable,
-                       GError               **error)
+flatpak_load_http_uri_once (SoupSession           *soup_session,
+                            const char            *uri,
+                            FlatpakHTTPFlags       flags,
+                            const char            *token,
+                            FlatpakLoadUriProgress progress,
+                            gpointer               user_data,
+                            GCancellable          *cancellable,
+                            GError               **error)
 {
   GBytes *bytes = NULL;
   g_autoptr(GMainContext) context = NULL;
@@ -599,15 +602,111 @@ flatpak_load_http_uri (SoupSession           *soup_session,
 }
 
 gboolean
-flatpak_download_http_uri (SoupSession           *soup_session,
-                           const char            *uri,
-                           FlatpakHTTPFlags       flags,
-                           GOutputStream         *out,
-                           const char            *token,
-                           FlatpakLoadUriProgress progress,
-                           gpointer               user_data,
-                           GCancellable          *cancellable,
-                           GError               **error)
+flatpak_retry_http_uri (SoupSession           *soup_session,
+                        const char            *uri,
+                        FlatpakHTTPFlags       flags,
+                        int                    dest_dfd,
+                        const char            *dest_subpath,
+                        GOutputStream         *out_stream,
+                        const char            *token,
+                        FlatpakLoadUriProgress progress,
+                        gpointer               user_data,
+                        GBytes                *out_bytes,
+                        GCancellable          *cancellable,
+                        GError               **error)
+{
+  for (guint i = DEFAULT_N_NETWORK_RETRIES; i > 0; --i)
+    {
+      g_autoptr(GError) local_error = NULL;
+      g_autoptr(GBytes) bytes = NULL;
+
+      if (out_bytes)
+        {
+          bytes = flatpak_load_http_uri_once (soup_session, uri, flags,
+                                              token, progress, user_data,
+                                              cancellable, local_error);
+
+          if (local_error == NULL)
+            {
+              *out_bytes = g_steal_pointer (&bytes);
+              return TRUE;
+            }
+        }
+      else if (out_stream != NULL)
+        {
+          guint64 bytes_written = 0;
+
+          if (flatpak_download_http_uri_once (soup_session, uri, flags,
+                                              out_stream, token,
+                                              progress, user_data,
+                                              &bytes_written,
+                                              cancellable, local_error))
+            return TRUE;
+
+          /* If the output stream has already been written to we can't retry */
+          if (bytes_written > 0)
+            {
+              g_propagate_error (error, local_error);
+              break;
+            }
+        }
+      else
+        {
+          g_assert (dest_subpath != NULL); /* is this valid? */
+          flatpak_cache_http_uri_once (soup_session, uri, flags,
+                                       dest_dfd, dest_subpath,
+                                       progress, user_data,
+                                       cancellable, local_error);
+          /* TODO what happens if the file is partially written out? */
+        }
+
+      if (g_cancellable_set_error_if_cancelled (cancellable, error))
+        return FALSE;
+
+      /* Retry the request if a transient networking error was encountered.
+       * This set of errors is copied from libostree.
+       */
+      if (i > 1 &&
+          (g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT) ||
+           g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND) ||
+           g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE) ||
+           g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT) ||
+#if !GLIB_CHECK_VERSION(2, 44, 0)
+           g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_BROKEN_PIPE) ||
+#else
+           g_error_matches (local_error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) ||
+#endif
+           g_error_matches (local_error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND) ||
+           g_error_matches (local_error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_TEMPORARY_FAILURE)))
+        {
+          g_debug ("Retrying request (remaining: %u retries), due to transient error: %s",
+                   i - 1, local_error->message);
+
+          /* Reset the progress */
+          if (progress)
+            progress (0, user_data);
+
+          continue;
+        }
+
+      g_propagate_error (error, local_error);
+      break;
+    }
+
+  return FALSE;
+}
+
+gboolean
+flatpak_download_http_uri_once (SoupSession           *soup_session,
+                                const char            *uri,
+                                FlatpakHTTPFlags       flags,
+                                GOutputStream         *out,
+                                const char            *token,
+                                FlatpakLoadUriProgress progress,
+                                gpointer               user_data,
+                                guint64               *out_bytes_written,
+                                GCancellable          *cancellable,
+                                GError               **error)
 {
   g_autoptr(SoupRequestHTTP) request = NULL;
   g_autoptr(GMainLoop) loop = NULL;
@@ -648,6 +747,9 @@ flatpak_download_http_uri (SoupSession           *soup_session,
                            load_uri_callback, &data);
 
   g_main_loop_run (loop);
+
+  if (out_bytes_written)
+    *out_bytes_written = data.downloaded_bytes;
 
   if (data.error)
     {
@@ -693,15 +795,15 @@ sync_and_rename_tmpfile (GLnxTmpfile *tmpfile,
 }
 
 gboolean
-flatpak_cache_http_uri (SoupSession           *soup_session,
-                        const char            *uri,
-                        FlatpakHTTPFlags       flags,
-                        int                    dest_dfd,
-                        const char            *dest_subpath,
-                        FlatpakLoadUriProgress progress,
-                        gpointer               user_data,
-                        GCancellable          *cancellable,
-                        GError               **error)
+flatpak_cache_http_uri_once (SoupSession           *soup_session,
+                             const char            *uri,
+                             FlatpakHTTPFlags       flags,
+                             int                    dest_dfd,
+                             const char            *dest_subpath,
+                             FlatpakLoadUriProgress progress,
+                             gpointer               user_data,
+                             GCancellable          *cancellable,
+                             GError               **error)
 {
   g_autoptr(SoupRequestHTTP) request = NULL;
   g_autoptr(GMainLoop) loop = NULL;
